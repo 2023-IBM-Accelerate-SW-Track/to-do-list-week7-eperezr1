@@ -1,3 +1,4 @@
+//sets up authentication system using express-basic-auth and custom middleware in Node.js app. Also defines several endpoints for user auth, user registration, and logout
 const express = require("express"),
        app = express(),
        port = process.env.PORT || 8080,
@@ -9,6 +10,15 @@ const todoDBName = "tododb";
 const useCloudant = true;
 
 
+const basicAuth = require("express-basic-auth"); //import module for for basic authentication
+var { authenticator, upsertUser, cookieAuth } = require("./authentication"); // import authenticator, upsertUser, and cookieAuth functions from authentication.js
+const auth = basicAuth({ //auth var is assigned to basicAuth middleware, which is used to make endpoints authenticated
+    authorizer: authenticator
+});
+const cookieParser = require("cookie-parser");
+app.use(cookieParser("82e4e438a0705fabf61f9854e3b575af"));
+
+
 
 //Init code for Cloudant
 const {CloudantV1} = require('@ibm-cloud/cloudant');
@@ -18,7 +28,9 @@ if (useCloudant)
 }
 
 
-app.use(cors());
+//app.use(cors());
+
+
 app.use(bodyParser.json({ extended: true }));
 
 app.listen(port, () => console.log("Backend server live on " + port));
@@ -30,7 +42,7 @@ app.get("/", (request, response) => {
 });
 
 //add new item to json file
-app.post("/add/item", addItem)
+app.post("/add/item",cookieAuth, addItem) //add cookieAuth middleware to the endpoints to make them authenticated
 
 async function addItem (request, response) {
     try {
@@ -83,7 +95,7 @@ async function addItem (request, response) {
 }
 
 //** week 6, get all items from the json database*/
-app.get("/get/items", getItems)
+app.get("/get/items",cookieAuth, getItems)
 async function getItems (request, response) {
     //begin here
 
@@ -109,7 +121,7 @@ async function getItems (request, response) {
 };
 
 //** week 6, search items service */
-app.get("/get/searchitem", searchItems) 
+app.get("/get/searchitem",cookieAuth, searchItems) 
 async function searchItems (request, response) {
     //begin here
     var searchField = request.query.taskname;
@@ -162,3 +174,33 @@ async function initDB ()
 
   }
 };
+
+
+
+
+app.use(cors({
+    credentials: true,
+    origin: 'http://localhost:3000'
+}));
+
+
+
+
+app.get("/authenticate", auth, (req, res) => { // endpoint protected by auth middleware, ensuring user has provided authentication
+  console.log(`user logging in: ${req.auth.user}`); //if authentication succeeds, sets a signed cookie named 'user' on the response, which will persist the user's auth for later requests
+  res.cookie('user', req.auth.user, { signed: true, withCredentials: true });
+  res.sendStatus(200); //send 200 (ok) status upon successful authentication
+});
+
+app.post("/users", (req, res) => { //this endpoint allows adding a new user to the users store and updating users.json file
+  const b64auth = (req.headers.authorization || '').split(' ')[1] || '' //expects user crednetials in the authorization header usign basic authentication
+  const [username, password] = Buffer.from(b64auth, 'base64').toString().split(':')
+  const upsertSucceeded = upsertUser(username, password) //calls upsertUser fucntion to add or update user in users object
+  res.sendStatus(upsertSucceeded ? 200 : 401); // 200 if success, 401 is auth fails
+});
+
+app.get("/logout", (req, res) => { //endpoint used to logout user by clearing signed 'user' cookie
+  res.clearCookie('user');
+  res.end();
+});
+
